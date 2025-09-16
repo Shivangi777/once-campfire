@@ -1,4 +1,6 @@
+# Use ENV directly, fallback to dummy for assets
 Rails.application.config.secret_key_base ||= ENV['SECRET_KEY_BASE'] || 'dummy_secret_for_assets'
+
 
 
 require "active_support/core_ext/integer/time"
