@@ -1,4 +1,5 @@
-Rails.application.secrets.secret_key_base ||= ENV['SECRET_KEY_BASE']
+Rails.application.config.secret_key_base ||= ENV['SECRET_KEY_BASE'] || 'dummy_secret_for_assets'
+
 
 require "active_support/core_ext/integer/time"
 require "active_support/core_ext/numeric/bytes"
