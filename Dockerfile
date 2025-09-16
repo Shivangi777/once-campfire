@@ -35,7 +35,7 @@ RUN bundle install && \
 # Copy the rest of the app
 COPY . .
 
-# Set dummy secret and fork_per_job for asset precompilation
+# Set dummy secret for precompilation
 ENV SECRET_KEY_BASE=dummy_secret_for_assets
 ENV FORK_PER_JOB=false
 
