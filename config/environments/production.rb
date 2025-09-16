@@ -1,101 +1,71 @@
-# Use ENV directly, fallback to dummy for assets
-Rails.application.config.secret_key_base ||= ENV['SECRET_KEY_BASE'] || 'dummy_secret_for_assets'
+# syntax=docker/dockerfile:1
 
+# -----------------------
+# Base Image
+# -----------------------
+ARG RUBY_VERSION=3.4.5
+FROM ruby:$RUBY_VERSION-slim AS base
 
+WORKDIR /rails
 
-require "active_support/core_ext/integer/time"
-require "active_support/core_ext/numeric/bytes"
+# Install system packages
+RUN apt-get update -qq && \
+    apt-get install --no-install-recommends -y \
+      curl libsqlite3-0 libvips libjemalloc2 ffmpeg redis build-essential git pkg-config libyaml-dev && \
+    ln -s /usr/lib/$(uname -m)-linux-gnu/libjemalloc.so.2 /usr/local/lib/libjemalloc.so && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/*
 
-Rails.application.configure do
-  # Settings specified here will take precedence over those in config/application.rb.
+# Set production environment
+ENV RAILS_ENV=production \
+    BUNDLE_DEPLOYMENT=1 \
+    BUNDLE_PATH=/usr/local/bundle \
+    BUNDLE_WITHOUT=development \
+    LD_PRELOAD=/usr/local/lib/libjemalloc.so
 
-  # Code is not reloaded between requests.
-  config.enable_reloading = false
+# -----------------------
+# Build stage
+# -----------------------
+FROM base AS build
 
-  # Eager load code on boot for better performance and memory savings (ignored by Rake tasks).
-  config.eager_load = true
+# Copy Gemfiles and install gems
+COPY Gemfile Gemfile.lock vendor ./
+RUN bundle install && \
+    rm -rf ~/.bundle/ "${BUNDLE_PATH}"/ruby/*/cache "${BUNDLE_PATH}"/ruby/*/bundler/gems/*/.git
 
-  # Full error reports are disabled and caching is turned on.
-  config.consider_all_requests_local       = false
-  config.action_controller.perform_caching = true
+# Copy the rest of the app
+COPY . .
 
-  # Cache digest stamped assets for far-future expiry.
-  # Short cache for others: robots.txt, sitemap.xml, 404.html, etc.
-  config.public_file_server.headers = {
-    "cache-control" => lambda do |path, _|
-      if path.start_with?("/assets/")
-        # Files in /assets/ are expected to be fully immutable.
-        # If the content change the URL too.
-        "public, immutable, max-age=#{1.year.to_i}"
-      else
-        # For anything else we cache for 1 minute.
-        "public, max-age=#{1.minute.to_i}, stale-while-revalidate=#{5.minutes.to_i}"
-      end
-    end
-  }
+# Precompile assets with dummy secret and fork_per_job env
+RUN SECRET_KEY_BASE=dummy_secret_for_assets FORK_PER_JOB=false ./bin/rails assets:precompile
 
-  # Ensures that a master key has been made available in either ENV["RAILS_MASTER_KEY"]
-  # or in config/master.key. This key is used to decrypt credentials (and other encrypted files).
-  # config.require_master_key = true
+# -----------------------
+# Final runtime stage
+# -----------------------
+FROM base
 
-  # Enable serving of images, stylesheets, and JavaScripts from an asset server.
-  # config.asset_host = "http://assets.example.com"
+# Metadata
+ARG OCI_DESCRIPTION
+LABEL org.opencontainers.image.description="${OCI_DESCRIPTION}"
+ARG OCI_SOURCE
+LABEL org.opencontainers.image.source="${OCI_SOURCE}"
+LABEL org.opencontainers.image.licenses="MIT"
 
-  # Store uploaded files on the local file system (see config/storage.yml for options).
-  config.active_storage.service = :local
+# Create non-root user
+RUN groupadd --system --gid 1000 rails && \
+    useradd --uid 1000 --gid 1000 --create-home --shell /bin/bash rails
+USER 1000:1000
 
-  # Assume all access to the app is happening through a SSL-terminating reverse proxy.
-  # config.assume_ssl = true
+# Default environment variables for runtime
+ENV HTTP_IDLE_TIMEOUT=60
+ENV HTTP_READ_TIMEOUT=300
+ENV HTTP_WRITE_TIMEOUT=300
 
-  # Force all access to the app over SSL, use Strict-Transport-Security, and use secure cookies.
-  # config.force_ssl = true
+# Copy gems and app from build stage
+COPY --from=build --chown=rails:rails /usr/local/bundle /usr/local/bundle
+COPY --from=build --chown=rails:rails /rails /rails
 
-  # Skip http-to-https redirect for the default health check endpoint.
-  # config.ssl_options = { redirect: { exclude: ->(request) { request.path == "/up" } } }
+# Expose HTTP and HTTPS ports
+EXPOSE 80 443
 
-  # Log to STDOUT by default
-  config.logger = ActiveSupport::Logger.new(STDOUT)
-    .tap  { |logger| logger.formatter = ::Logger::Formatter.new }
-    .then { |logger| ActiveSupport::TaggedLogging.new(logger) }
-
-  # Prepend all log lines with the following tags.
-  config.log_tags = [ :request_id ]
-
-  # Info include generic and useful information about system operation, but avoids logging too much
-  # information to avoid inadvertent exposure of personally identifiable information (PII). Use "debug"
-  # for everything.
-  config.log_level = ENV.fetch("RAILS_LOG_LEVEL", "info")
-
-  # Prevent health checks from clogging up the logs.
-  config.silence_healthcheck_path = "/up"
-
-  # Don't log any deprecations.
-  config.active_support.report_deprecations = false
-
-  # Cache in memory for now
-  config.cache_store = :redis_cache_store
-
-  # Assets are cacheable
-  config.public_file_server.headers = {
-    "Cache-Control" => "public, max-age=#{30.days.to_i}"
-  }
-
-  # Enable locale fallbacks for I18n (makes lookups for any locale fall back to
-  # the I18n.default_locale when a translation cannot be found).
-  config.i18n.fallbacks = true
-
-  # Always be SSL'ing (unless told not to)
-  config.assume_ssl = ENV["DISABLE_SSL"].blank?
-  config.force_ssl  = ENV["DISABLE_SSL"].blank?
-
-  # Don't log any deprecations.
-  config.active_support.report_deprecations = false
-
-  # Do not dump schema after migrations.
-  config.active_record.dump_schema_after_migration = false
-
-  # Only use :id for inspections in production.
-  config.active_record.attributes_for_inspect = [ :id ]
-
-  config.active_job.queue_adapter = :resque
-end
+# Start the app
+CMD ["bin/boot"]
