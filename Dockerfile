@@ -35,8 +35,10 @@ RUN bundle install && \
 # Copy the rest of the app
 COPY . .
 
-# Precompile assets with dummy secret
-RUN SECRET_KEY_BASE=dummy_secret_for_assets ./bin/rails assets:precompile
+# Precompile assets with dummy SECRET_KEY_BASE
+ENV SECRET_KEY_BASE=dummy_secret_for_assets
+ENV FORK_PER_JOB=false
+RUN ./bin/rails assets:precompile
 
 # -----------------------
 # Final runtime stage
